@@ -1,0 +1,256 @@
+# CrazyFlie's Makefile
+# Copyright (c) 2011,2012 Bitcraze AB
+# This Makefile compiles all the objet file to ./bin/ and the resulting firmware
+# image in ./cfX.elf and ./cfX.bin
+
+# Put your personal build config in tools/make/config.mk and DO NOT COMMIT IT!
+# Make a copy of tools/make/config.mk.example to get you started
+CFLAGS += $(EXTRA_CFLAGS)
+
+######### JTAG and environment configuration ##########
+OPENOCD           ?= openocd
+OPENOCD_INTERFACE ?= interface/stlink-v2.cfg
+OPENOCD_CMDS      ?=
+CROSS_COMPILE     ?= arm-none-eabi-
+PYTHON2           ?= python2
+DFU_UTIL          ?= dfu-util
+CLOAD             ?= 1
+DEBUG             ?= 0
+CLOAD_SCRIPT      ?= python3 -m cfloader
+CLOAD_CMDS        ?=
+CLOAD_ARGS        ?=
+PLATFORM					?= CF2
+LPS_TDMA_ENABLE   ?= 0
+LPS_TDOA_ENABLE   ?= 0
+OPENOCD_TARGET    ?= target/stm32f4x_stlink.cfg
+USE_FPU           ?= 1
+
+
+# Now needed for SYSLINK
+CFLAGS += -DUSE_RADIOLINK_CRTP     # Set CRTP link to radio
+CFLAGS += -DENABLE_UART          # To enable the uart
+REV               ?= D
+
+LINKER_DIR = tools
+
+LIB = libraries 
+
+BIN = build
+
+# Crazyflie sources
+SRCS = $(wildcard src/*.c)
+SRCS += $(wildcard libraries/CMSIS/ST/STM32F4xx/Source/*.c)
+SRCS += $(wildcard libraries/STM32F4xx_StdPeriph_Driver/src/*.c)
+
+############### Source files configuration ################
+
+# Init
+OBJ := $(SRCS:.c=.o)
+#OBJ := $(SRCS:.s=.o)
+
+#endif
+
+ifdef P
+  C_PROFILE = -D P_$(P)
+endif
+
+############### Compilation configuration ################
+AS = $(CROSS_COMPILE)as
+CC = $(CROSS_COMPILE)gcc
+LD = $(CROSS_COMPILE)gcc
+SIZE = $(CROSS_COMPILE)size
+OBJCOPY = $(CROSS_COMPILE)objcopy
+GDB = $(CROSS_COMPILE)gdb
+
+#INCLUDES  = -I$(FREERTOS)/include -I$(PORT) -Isrc
+INCLUDES  = -Isrc
+INCLUDES += -I$(LIB)/CMSIS/CMSIS/Include
+INCLUDES += -I$(LIB)/STM32F4xx_StdPeriph_Driver/inc
+INCLUDES += -I$(LIB)/CMSIS/STM32F4xx/Include
+
+ifeq ($(USE_FPU), 1)
+	PROCESSOR = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
+	CFLAGS += -fno-math-errno -DARM_MATH_CM4 -D__FPU_PRESENT=1 -D__TARGET_FPU_VFP
+else
+	PROCESSOR = -mcpu=cortex-m4 -mthumb
+endif
+
+#Flags required by the ST library
+STFLAGS_CF2 = -DSTM32F4XX -DSTM32F40_41xxx -DHSE_VALUE=8000000 -DUSE_STDPERIPH_DRIVER
+
+ifeq ($(DEBUG), 1)
+  CFLAGS += -O0 -g3 -DDEBUG
+else
+  # Fail on warnings
+  CFLAGS += -Os -g3 -Werror
+endif
+
+ifeq ($(LTO), 1)
+  CFLAGS += -flto
+endif
+
+ifeq ($(USE_ESKYLINK), 1)
+  CFLAGS += -DUSE_ESKYLINK
+endif
+
+CFLAGS += $(PROCESSOR) $(INCLUDES) $(STFLAGS_CF2)
+
+CFLAGS += -Wall -Wmissing-braces -fno-strict-aliasing $(C_PROFILE) -std=gnu11
+# Compiler flags to generate dependency files:
+CFLAGS += -MD -MP -MF $(BIN)/dep/$(@).d -MQ $(@)
+#Permits to remove un-used functions and global variables from output file
+CFLAGS += -ffunction-sections -fdata-sections
+# Prevent promoting floats to doubles
+CFLAGS += -Wdouble-promotion
+
+
+ASFLAGS = $(PROCESSOR) $(INCLUDES)
+LDFLAGS = --specs=nano.specs $(PROCESSOR) -Wl,-Map=$(PROG).map,--cref,--gc-sections,--undefined=uxTopUsedPriority
+
+LDFLAGS += -T $(LINKER_DIR)/stm32f4_flash.ld
+LOAD_ADDRESS = 0x8004000
+
+ifeq ($(LTO), 1)
+  LDFLAGS += -Os -flto -fuse-linker-plugin
+endif
+
+#Program name
+PROG = cf2
+#Where to compile the .o
+VPATH += $(BIN)
+
+##################### Misc. ################################
+ifeq ($(SHELL),/bin/sh)
+  COL_RED=\033[1;31m
+  COL_GREEN=\033[1;32m
+  COL_RESET=\033[m
+endif
+
+#################### Targets ###############################
+
+
+all: build 
+build: clean_version compile size
+compile: $(SRCS) $(PROG).hex $(PROG).hex $(PROG).bin $(PROG).dfu
+ifeq ($(SHELL), /bin/sh)
+	@echo "  COMPILE"
+	@echo "    $(PROG).hex"
+	@echo "    $(PROG).bin"
+	@echo "    $(PROG).dfu"
+endif
+
+clean_version:
+ifeq ($(SHELL),/bin/sh)
+	@echo "  CLEAN_VERSION"
+	@rm -f version.c
+endif
+
+size: 
+ifeq ($(SHELL),/bin/sh)
+	@echo "  SIZE"
+endif
+	@$(SIZE) -B $(PROG).elf
+
+#Radio bootloader
+cload:
+ifeq ($(CLOAD), 1)
+	$(CLOAD_SCRIPT) $(CLOAD_CMDS) flash $(CLOAD_ARGS) $(PROG).bin stm32-fw
+else
+	@echo "Only cload build can be bootloaded. Launch build and cload with CLOAD=1"
+endif
+
+HEX_COMMAND=$(OBJCOPY) $< -O ihex $@
+HEX_COMMAND_SILENT="  COPY  $@"
+$(PROG).hex: $(PROG).elf
+	@$(if $(QUIET), ,echo $(HEX_COMMAND$(VERBOSE)) )
+	@$(HEX_COMMAND)
+ifeq ($(SHELL),/bin/sh)
+	@echo "  HEX"
+endif
+
+#Flash the stm.
+flash:
+	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -c "reset halt" \
+                 -c "flash write_image erase $(PROG).elf" -c "verify_image $(PROG).elf" -c "reset run" -c shutdown
+
+flash_dfu:
+	$(DFU_UTIL) -a 0 -D $(PROG).dfu
+
+#STM utility targets
+halt:
+	$(OPENOCD) -d0 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -c "halt" -c shutdown
+
+reset:
+	$(OPENOCD) -d0 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -c "reset" -c shutdown
+
+openocd:
+	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -c "\$$_TARGETNAME configure -rtos auto"
+
+trace:
+	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) $(OPENOCD_CMDS) -f $(OPENOCD_TARGET) -c init -c targets -f tools/trace/enable_trace.cfg
+
+gdb: $(PROG).elf
+	$(GDB) -ex "target remote localhost:3333" -ex "monitor reset halt" $^
+
+erase:
+	$(OPENOCD) -d2 -f $(OPENOCD_INTERFACE) -f $(OPENOCD_TARGET) -c init -c targets -c "halt" -c "stm32f4x mass_erase 0" -c shutdown
+
+#Print preprocessor #defines
+prep:
+	@$(CC) $(CFLAGS) -dM -E - < /dev/null
+
+# ------- FROM tools/target.mk
+CC_COMMAND=$(CC) $(CFLAGS) -c $< -o $(BIN)/$@
+$(BIN)/%.o : %.c
+ifeq ($(SHELL),/bin/sh)
+	@echo "   %.o : %.c $(CC_COMMAND)"
+endif
+	@$(CC_COMMAND)
+
+CCS_COMMAND=$(CC) $(CSFLAGS) -c $< -o $(BIN)/$@
+.S.o:
+	@$(CCS_COMMAND)
+
+LD_COMMAND=$(LD) $(LDFLAGS) $(foreach o,$(OBJ),$(BIN)/$(o)) -lm -o $@
+LD_COMMAND=$(LD) $(LDFLAGS) $(OBJ) -lm -o $@
+$(PROG).elf: $(OBJ)
+ifeq ($(SHELL),/bin/sh)
+	@echo "  ELF"
+	@echo " 	OBJ: $(OBJ)"
+endif
+	@$(LD_COMMAND)
+
+BIN_COMMAND=$(OBJCOPY) $< -O binary --pad-to 0 $@
+$(PROG).bin: $(PROG).elf
+	@$(if $(QUIET), ,echo $(BIN_COMMAND$(VERBOSE)) )
+	@$(BIN_COMMAND)
+
+DFU_COMMAND=$(PYTHON2) tools/dfu-convert.py -b $(LOAD_ADDRESS):$< $@
+$(PROG).dfu: $(PROG).bin
+	@$(if $(QUIET), ,echo $(DFU_COMMAND$(VERBOSE)) )
+	@$(DFU_COMMAND)
+
+AS_COMMAND=$(AS) $(ASFLAGS) $< -o $(BIN)/$@
+.s.o:
+	@$(if $(QUIET), ,echo $(AS_COMMAND$(VERBOSE)) )
+	@$(AS_COMMAND)
+
+CLEAN_O_COMMAND=rm -f $(foreach o,$(OBJ),$(BIN)/$(o))
+clean_o: clean_version
+	@$(if $(QUIET), ,echo $(CLEAN_O_COMMAND$(VERBOSE)) )
+	@$(CLEAN_O_COMMAND)
+
+CLEAN_COMMAND=rm -f cf*.elf cf*.hex cf*.bin cf*.dfu cf*.map $(BIN)/dep/*.d $(BIN)/*.o
+clean:
+	@$(if $(QUIET), ,echo $(CLEAN_COMMAND$(VERBOSE)) )
+	@$(CLEAN_COMMAND)
+
+MRPROPER_COMMAND=rm -f *~ hal/src/*~ hal/interface/*~ tasks/src/*~ tasks/inc/*~ utils/src/*~ utils/inc/*~ tools/make/*~; rm -rf bin/dep/*.d $(BIN)/*.a $(BIN)/vendor/*.o
+mrproper: clean
+	@$(if $(QUIET), ,echo $(MRPROPER_COMMAND$(VERBOSE)) )
+	@$(MRPROPER_COMMAND)
+#include dependencies
+-include $(DEPS)
+
+unit:
+	rake unit "DEFINES=$(CFLAGS)" "FILES=$(FILES)"
