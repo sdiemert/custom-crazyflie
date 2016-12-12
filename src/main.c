@@ -1,5 +1,4 @@
 #include "stm32f4xx_conf.h"
-#include "stm32f4xx.h"
 
 #define LED_PERIF RCC_AHB1Periph_GPIOC
 #define LED_PORT GPIOC

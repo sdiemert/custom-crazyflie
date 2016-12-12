@@ -2,3 +2,8 @@
 *.*~*
 *.bak
 build
+*.hex
+*.elf
+*.dfu
+*.bin
+*.map
