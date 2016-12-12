@@ -55,7 +55,7 @@ CFLAGS += -Wall -Wmissing-braces -fno-strict-aliasing -std=gnu11
 CFLAGS += -ffunction-sections -fdata-sections
 CFLAGS += -Wdouble-promotion
 CFLAGS += -fno-math-errno -DARM_MATH_CM4 -D__FPU_PRESENT=1 -D__TARGET_FPU_VFP
-CFLAGS += -MD -MP -MF -MQ -Wdouble-promotion
+CFLAGS += -MD -MP -Wdouble-promotion
 CFLAGS += $(PROCESSOR)
 CFLAGS += $(ST_FLAGS)
 CFLAGS += $(INCLUDES)

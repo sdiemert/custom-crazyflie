@@ -2,7 +2,7 @@
 
 #define LED_PERIF RCC_AHB1Periph_GPIOC
 #define LED_PORT GPIOC
-#define LEDS (GPIO_Pin_0 | GPIO_Pin_1) //| GPIO_Pin_2 | GPIO_Pin_3)
+#define LEDS (GPIO_Pin_0) //| GPIO_Pin_2 | GPIO_Pin_3)
 
 
 int main (void){
@@ -22,7 +22,11 @@ int main (void){
 
     GPIO_Init(LED_PORT, &GPIO_InitStructure);
 
-    GPIO_ResetBits(LED_PORT, LEDS);
+    int i; 
+    while(1){
+        GPIO_ToggleBits(LED_PORT, LEDS);
+        for(i=0; i<100000000;i++);
+    }
 
     //ledSet(0,1);
 
